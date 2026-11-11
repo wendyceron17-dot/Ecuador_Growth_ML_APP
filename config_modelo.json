@@ -1,0 +1,14 @@
+{
+  "modelo": "Random Forest",
+  "target": "crecimiento_pib",
+  "features": [
+    "precio_petroleo",
+    "credito_privado",
+    "ventas_internas",
+    "consumo_electrico"
+  ],
+  "run_id": "RUN-003",
+  "periodicidad": "trimestral",
+  "datos": "simulados",
+  "version_config": 1
+}

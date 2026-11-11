@@ -1,0 +1,9 @@
+run_id,fecha_utc,modelo,n_estimators,max_depth,min_samples_leaf,max_features,random_state,n_splits,test_size,periodo_entrenamiento_fin,n_variables,variables,mae_cv,rmse_cv,std_rmse_cv,ranking,es_mejor
+RUN-003,2026-11-11T00:16:08+00:00,Random Forest,100,7,2,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",0.9236408998345405,1.0192234407027712,0.2768089720178272,1,True
+RUN-007,2026-11-11T00:16:08+00:00,Random Forest,200,7,2,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",0.9467586724356374,1.0449382967087477,0.25177219260540107,2,False
+RUN-001,2026-11-11T00:16:08+00:00,Random Forest,100,4,2,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",0.9939258029328031,1.0987299296640558,0.28979714417241775,3,False
+RUN-005,2026-11-11T00:16:08+00:00,Random Forest,200,4,2,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",1.0037942079700302,1.1124388050255578,0.26109531971975564,4,False
+RUN-004,2026-11-11T00:16:08+00:00,Random Forest,100,7,4,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",1.0085981917787077,1.116670084965227,0.2697732587750682,5,False
+RUN-008,2026-11-11T00:16:08+00:00,Random Forest,200,7,4,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",1.013060608946609,1.1249750276964394,0.2527634551489312,6,False
+RUN-002,2026-11-11T00:16:08+00:00,Random Forest,100,4,4,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",1.028888840279741,1.143336984317647,0.26978506580187733,7,False
+RUN-006,2026-11-11T00:16:08+00:00,Random Forest,200,4,4,1.0,2026,4,4,2024Q4,4,"precio_petroleo, credito_privado, ventas_internas, consumo_electrico",1.03122722014593,1.1482408202642065,0.2500158488926704,8,False
