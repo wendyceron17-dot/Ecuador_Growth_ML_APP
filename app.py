@@ -1,9 +1,12 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 import json
+import io
+from datetime import datetime, timezone
+from sklearn.base import clone
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from pathlib import Path
 
@@ -227,11 +230,12 @@ if "registro_manual" not in st.session_state:
 # 6. MENÚ PRINCIPAL
 # ==========================================================
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🧮 Predicción manual",
     "📂 Cargar CSV",
     "🧪 Experiment Tracker",
-    "📊 Monitoreo"
+    "📊 Monitoreo",
+    "🔄 Reentrenamiento"
 ])
 
 
@@ -991,3 +995,204 @@ st.caption(
     "Ecuador Growth ML · Proyecto académico de MLOps "
     "| Google Colab + GitHub + Streamlit"
 )
+
+
+# ==========================================================
+# 12. REENTRENAMIENTO BAJO DEMANDA (DEMOSTRACIÓN MLOps)
+# ==========================================================
+
+with tab5:
+    st.header("Reentrenamiento supervisado del modelo")
+    st.write(
+        "Cargue la base histórica original y observaciones posteriores con el "
+        "PIB ya observado. El sistema entrenará un candidato, comparará su error "
+        "con el modelo publicado en los mismos trimestres y permitirá descargar "
+        "el modelo actualizado. No reemplaza automáticamente el publicado."
+    )
+    st.info(
+        "Esta demostración se activa al pulsar un botón. No es reentrenamiento "
+        "programado y no guarda modelos permanentemente en Streamlit Cloud."
+    )
+    with st.expander("Formato requerido de ambos archivos CSV"):
+        st.write("Columna temporal: `trimestre` (ejemplo: 2027Q1).")
+        st.write(f"Variable observada: `{TARGET}`.")
+        st.write("Predictores del modelo activo:", FEATURES)
+        st.caption(
+            "La base histórica debe ser la misma utilizada para entrenar el "
+            "modelo_pib.joblib publicado. Las nuevas observaciones deben ser "
+            "posteriores y no haber sido utilizadas para entrenarlo."
+        )
+
+    archivo_historico = st.file_uploader(
+        "1. Base histórica original (con PIB observado)",
+        type="csv", key="historico_reentrenamiento"
+    )
+    archivo_nuevo = st.file_uploader(
+        "2. Nuevos trimestres (indicadores y PIB observado)",
+        type="csv", key="nuevos_reentrenamiento"
+    )
+    confirma_origen = st.checkbox(
+        "Confirmo que la base histórica corresponde al entrenamiento del "
+        "modelo publicado y que los datos nuevos no fueron utilizados en él.",
+        key="confirmacion_reentrenamiento"
+    )
+
+    def ordenar_y_validar(df, etiqueta):
+        requeridas = ["trimestre", TARGET] + FEATURES
+        ausentes = [c for c in requeridas if c not in df.columns]
+        if ausentes:
+            raise ValueError(f"{etiqueta}: faltan columnas {ausentes}")
+        d = df[requeridas].copy()
+        if d.empty:
+            raise ValueError(f"{etiqueta}: el CSV no contiene filas")
+        d["trimestre"] = d["trimestre"].astype(str).str.strip().str.upper()
+        d["trimestre"] = d["trimestre"].str.replace(
+            r"^(\d{4})[- ]?T([1-4])$", r"\1Q\2", regex=True
+        )
+        if not d["trimestre"].str.fullmatch(r"\d{4}Q[1-4]").all():
+            raise ValueError(
+                f"{etiqueta}: use trimestres como 2026Q4 o 2027Q1"
+            )
+        if d["trimestre"].duplicated().any():
+            raise ValueError(f"{etiqueta}: hay trimestres duplicados")
+        for c in FEATURES + [TARGET]:
+            d[c] = pd.to_numeric(d[c], errors="coerce")
+        if d[TARGET].isna().any():
+            raise ValueError(f"{etiqueta}: existen valores de PIB no observados")
+        if d[FEATURES].isna().all(axis=1).any():
+            raise ValueError(f"{etiqueta}: existen filas sin ningún predictor válido")
+        return d.sort_values("trimestre").reset_index(drop=True)
+
+    if st.button(
+        "Evaluar y reentrenar", type="primary", key="entrenar_actualizado"
+    ):
+        st.session_state.pop("resultado_reentrenamiento", None)
+        if archivo_historico is None or archivo_nuevo is None:
+            st.warning("Cargue ambos archivos CSV antes de continuar.")
+        elif not confirma_origen:
+            st.warning("Verifique y confirme la procedencia de los datos.")
+        else:
+            try:
+                if not hasattr(modelo, "fit") or not hasattr(modelo, "predict"):
+                    raise ValueError("El archivo joblib no contiene un estimador válido")
+                historico_re = ordenar_y_validar(
+                    pd.read_csv(archivo_historico), "Histórico"
+                )
+                nuevos_re = ordenar_y_validar(
+                    pd.read_csv(archivo_nuevo), "Nuevos datos"
+                )
+                if historico_re["trimestre"].max() >= nuevos_re["trimestre"].min():
+                    raise ValueError(
+                        "Los nuevos trimestres deben ser posteriores a toda la "
+                        "base histórica, sin solapamientos."
+                    )
+                if len(nuevos_re) < 4:
+                    raise ValueError(
+                        "Se requieren al menos cuatro trimestres nuevos con PIB "
+                        "observado para entrenar y reservar una prueba posterior."
+                    )
+                # Reservar una ventana estrictamente posterior para comparar
+                # ambos modelos sobre los MISMOS datos, sin entrenar con ellos.
+                n_test = max(2, len(nuevos_re) // 4)
+                nuevos_train = nuevos_re.iloc[:-n_test]
+                holdout = nuevos_re.iloc[-n_test:]
+                if len(nuevos_train) < 2:
+                    raise ValueError("Insuficientes nuevos trimestres para entrenar")
+                base_candidato = pd.concat(
+                    [historico_re, nuevos_train], ignore_index=True
+                )
+                candidato = clone(modelo)
+                candidato.fit(base_candidato[FEATURES], base_candidato[TARGET])
+                y_real = holdout[TARGET].to_numpy()
+                p_actual = modelo.predict(holdout[FEATURES])
+                p_candidato = candidato.predict(holdout[FEATURES])
+                rmse_actual = float(np.sqrt(mean_squared_error(y_real, p_actual)))
+                rmse_candidato = float(np.sqrt(mean_squared_error(y_real, p_candidato)))
+                mae_actual = float(mean_absolute_error(y_real, p_actual))
+                mae_candidato = float(mean_absolute_error(y_real, p_candidato))
+                aprobado = rmse_candidato < rmse_actual
+                tabla_evaluacion = holdout[["trimestre", TARGET]].copy()
+                tabla_evaluacion["prediccion_actual"] = p_actual
+                tabla_evaluacion["prediccion_candidato"] = p_candidato
+
+                reporte = {
+                    "fecha_utc": datetime.now(timezone.utc).isoformat(),
+                    "variables": FEATURES,
+                    "target": TARGET,
+                    "ultimo_trimestre_historico": str(historico_re["trimestre"].max()),
+                    "ultimo_trimestre_nuevo": str(nuevos_re["trimestre"].max()),
+                    "n_historico": len(historico_re),
+                    "n_nuevos_entrenamiento": len(nuevos_train),
+                    "n_holdout": len(holdout),
+                    "inicio_holdout": str(holdout["trimestre"].iloc[0]),
+                    "fin_holdout": str(holdout["trimestre"].iloc[-1]),
+                    "rmse_actual": rmse_actual,
+                    "rmse_candidato": rmse_candidato,
+                    "mae_actual": mae_actual,
+                    "mae_candidato": mae_candidato,
+                    "supera_rmse_actual": aprobado,
+                    "criterio": "RMSE del candidato menor, medido sobre el mismo holdout posterior",
+                    "advertencia": "Comparación didáctica; con pocos trimestres la evidencia es limitada"
+                }
+                # Solo tras la comparación, ajustar un modelo descargable con
+                # toda la historia disponible, incluyendo el holdout ya evaluado.
+                final = clone(modelo)
+                base_final = pd.concat([historico_re, nuevos_re], ignore_index=True)
+                final.fit(base_final[FEATURES], base_final[TARGET])
+                buffer = io.BytesIO()
+                joblib.dump(final, buffer)
+                st.session_state["resultado_reentrenamiento"] = {
+                    "reporte": reporte,
+                    "tabla": tabla_evaluacion,
+                    "joblib": buffer.getvalue(),
+                }
+            except Exception as e:
+                st.error(f"No fue posible completar el reentrenamiento: {e}")
+
+    resultado = st.session_state.get("resultado_reentrenamiento")
+    if resultado:
+        r = resultado["reporte"]
+        st.subheader("Comparación fuera de muestra")
+        a, b, c = st.columns(3)
+        a.metric("RMSE actual", f"{r['rmse_actual']:.4f}")
+        b.metric("RMSE candidato", f"{r['rmse_candidato']:.4f}")
+        c.metric("Trimestres de evaluación", r["n_holdout"])
+        if r["supera_rmse_actual"]:
+            st.success("El candidato mejora el RMSE en esta prueba temporal.")
+        else:
+            st.warning("El candidato no mejora el RMSE en esta prueba temporal.")
+        st.dataframe(resultado["tabla"], use_container_width=True, hide_index=True)
+        st.line_chart(
+            resultado["tabla"].set_index("trimestre")[
+                [TARGET, "prediccion_actual", "prediccion_candidato"]
+            ]
+        )
+        st.caption(
+            "La comparación se realiza antes de reentrenar el modelo descargable "
+            "con todas las observaciones. Un resultado favorable con pocos "
+            "trimestres no demuestra una mejora generalizable."
+        )
+        st.download_button(
+            "Descargar reporte de reentrenamiento (JSON)",
+            data=json.dumps(r, indent=2, ensure_ascii=False),
+            file_name="reporte_reentrenamiento.json",
+            mime="application/json"
+        )
+        st.download_button(
+            "Descargar comparación temporal (CSV)",
+            data=resultado["tabla"].to_csv(index=False),
+            file_name="comparacion_reentrenamiento.csv",
+            mime="text/csv"
+        )
+        st.download_button(
+            "Descargar modelo reentrenado (.joblib)",
+            data=resultado["joblib"],
+            file_name="modelo_pib_reentrenado.joblib",
+            mime="application/octet-stream"
+        )
+        st.warning(
+            "Descargar no sustituye el modelo activo. Para desplegar una nueva "
+            "versión, revise las métricas y actualice los artefactos en GitHub. "
+            "No cargue archivos joblib de procedencia desconocida."
+        )
+
